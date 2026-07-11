@@ -1,0 +1,34 @@
+# Dependencies and virtual environments
+.venv/
+venv/
+backend/.venv/
+node_modules/
+frontend/node_modules/
+.pnpm-store/
+
+# Python / frontend build output
+__pycache__/
+*.py[cod]
+*.log
+dist/
+build/
+frontend/dist/
+
+# Local configuration and secrets (keep a sanitized .env.example if added)
+.env
+.env.*
+!.env.example
+
+# Runtime databases, user uploads, vector indexes, and caches
+*.db
+*.sqlite
+*.sqlite3
+storage/uploads/
+backend/storage/
+*.faiss
+*.index
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
