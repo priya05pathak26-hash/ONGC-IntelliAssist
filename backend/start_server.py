@@ -157,7 +157,8 @@ def main():
     # Execute uvicorn
     try:
         os.chdir(BACKEND_DIR)
-        os.execv(sys.executable, cmd)
+        # Use subprocess.call instead of os.execv on Windows to correctly handle spaces in python.exe path
+        sys.exit(subprocess.call(cmd))
     except Exception as e:
         print(f"\n Failed to start backend: {e}")
         sys.exit(1)
