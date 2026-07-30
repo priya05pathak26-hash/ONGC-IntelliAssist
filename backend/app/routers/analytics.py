@@ -18,9 +18,26 @@ def analytics(
     user: User = Depends(get_current_user),
 ):
     total_chats = db.query(ChatSession).filter(ChatSession.user_id == user.id).count()
-    questions_answered = db.query(ChatMessage).join(ChatSession).filter(ChatSession.user_id == user.id, ChatMessage.role == "user").count()
-    avg_response_time = db.query(func.avg(ChatMessage.response_time_ms)).join(ChatSession).filter(ChatSession.user_id == user.id).scalar() or 0
+    questions_asked = db.query(ChatMessage).join(ChatSession).filter(ChatSession.user_id == user.id, ChatMessage.role == "user").count()
+    questions_answered = db.query(ChatMessage).join(ChatSession).filter(
+        ChatSession.user_id == user.id,
+        ChatMessage.role == "assistant",
+        ChatMessage.content != "",
+        ChatMessage.source.isnot(None),
+        ChatMessage.domain != "Error",
+    ).count()
+    avg_response_time = db.query(func.avg(ChatMessage.response_time_ms)).join(ChatSession).filter(
+        ChatSession.user_id == user.id,
+        ChatMessage.role == "assistant",
+        ChatMessage.content != "",
+        ChatMessage.domain != "Error",
+    ).scalar() or 0
     uploaded_docs = db.query(Document).filter(Document.uploaded_by_id == user.id).count()
+    session_messages = 0
+    if session_id:
+        selected = db.get(ChatSession, session_id)
+        if selected and selected.user_id == user.id:
+            session_messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
     
     rag_queries = db.query(ChatMessage).join(ChatSession).filter(
         ChatSession.user_id == user.id, 
@@ -34,10 +51,10 @@ def analytics(
         ChatMessage.source.in_(["Enterprise Knowledge Base", "ONGC Knowledge Base", "Built-in ONGC Enterprise Knowledge Base"])
     ).count()
     
-    fallback_queries = db.query(ChatMessage).join(ChatSession).filter(
+    no_context_queries = db.query(ChatMessage).join(ChatSession).filter(
         ChatSession.user_id == user.id, 
         ChatMessage.role == "assistant", 
-        ChatMessage.source.in_(["General AI", "General AI (Ollama)", "Local AI Knowledge (Ollama)"])
+        ChatMessage.source == "No Relevant Context"
     ).count()
     
     helpful = db.query(Feedback).join(ChatMessage).join(ChatSession).filter(ChatSession.user_id == user.id, Feedback.helpful.is_(True)).count()
@@ -50,9 +67,11 @@ def analytics(
     
     payload = {
         "total_questions": questions_answered,
-        "ai_responses": fallback_queries,
+        "questions_asked": questions_asked,
+        "ai_responses": 0,
         "rag_responses": rag_queries,
         "knowledge_base_responses": kb_queries,
+        "no_context_responses": no_context_queries,
         "average_response_time_ms": round(avg_response_time, 2),
         "feedback_ratio": {"helpful": helpful, "not_helpful": not_helpful},
         "most_active_domains": [{"domain": domain or "General", "count": count} for domain, count in domains],
@@ -63,8 +82,15 @@ def analytics(
         "uploaded_documents": uploaded_docs,
         "rag_queries": rag_queries,
         "kb_queries": kb_queries,
-        "fallback_queries": fallback_queries,
+        "fallback_queries": 0,
+        "no_context_queries": no_context_queries,
+        "current_session_messages": session_messages,
+        "is_admin": user.role == "admin",
     }
+
+    if user.role == "admin":
+        payload["total_users"] = db.query(User).count()
+        payload["admin_total_questions"] = db.query(ChatMessage).filter(ChatMessage.role == "user").count()
 
     if include_routing:
         selected_session = db.get(ChatSession, session_id) if session_id else None

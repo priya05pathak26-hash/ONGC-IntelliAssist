@@ -17,18 +17,22 @@ settings = get_settings()
 
 @router.post("/register", response_model=UserOut)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == payload.email.lower()).first():
-        raise HTTPException(status_code=409, detail="Email already registered")
-    user = User(
+    # Enable self-registration
+    existing = db.query(User).filter(User.email == payload.email.lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email address already exists.")
+    
+    new_user = User(
         email=payload.email.lower(),
         full_name=payload.full_name,
         hashed_password=hash_password(payload.password),
-        role=payload.role if payload.role in {"admin", "employee", "viewer"} else "employee",
+        role=payload.role or "employee",
+        is_active=True
     )
-    db.add(user)
+    db.add(new_user)
     db.commit()
-    db.refresh(user)
-    return user
+    db.refresh(new_user)
+    return new_user
 
 
 @router.post("/login", response_model=TokenPair)

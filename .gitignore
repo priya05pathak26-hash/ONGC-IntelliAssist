@@ -21,6 +21,8 @@ frontend/dist/
 
 # Runtime databases, user uploads, vector indexes, and caches
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 storage/uploads/

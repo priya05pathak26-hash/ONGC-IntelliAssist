@@ -2,41 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide native browser password reveal/clear buttons (Edge, Chrome) */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear,
+input[type="password"]::-webkit-contacts-auto-fill-button,
+input[type="password"]::-webkit-credentials-auto-fill-button {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Also hide for text type when toggled to show */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
 
+/* Base Body Styles */
 body {
   margin: 0;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: 'Outfit', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 15px;
 }
 
+/* Full Dark Mode Background — covers every page including welcome */
+html.dark,
+html.dark body,
+html.dark #root,
+html.dark main {
+  background-color: #0b0f19 !important;
+  color: #f8fafc !important;
+}
+
+/* Force dark on all chat/welcome area containers */
+html.dark .bg-slate-50\/50 {
+  background-color: rgba(12, 18, 33, 0.4) !important;
+}
+
+/* Redesigned Button Styles for Premium feel */
 .primary {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg bg-ongc-blue px-4 py-2 text-sm font-semibold text-white transition hover:bg-ongc-deep hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60;
+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-ongc-blue to-ongc-deep px-5 py-2.5 text-[15px] font-semibold text-white shadow-md shadow-ongc-blue/15 hover:shadow-lg hover:shadow-ongc-blue/20 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none;
 }
 
 .icon-btn {
-  @apply inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 active:scale-[0.97] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white;
+  @apply inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-white/70 text-slate-700 backdrop-blur-sm shadow-sm transition-all duration-300 hover:bg-slate-50 hover:text-slate-900 active:scale-[0.97] dark:border-slate-800/80 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white;
 }
 
 .mini-icon {
-  @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300;
+  @apply inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400/90 transition-all duration-200 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200;
 }
 
 .mini {
-  @apply inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-300 transition dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:border-slate-700;
+  @apply inline-flex items-center gap-1 rounded-full border border-slate-200/80 px-3 py-0.5 text-xs text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-300 transition-all duration-200 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:border-slate-700;
 }
 
+/* Login Input field style: Fix icon overlap using pl-11 and pr-11 */
 .field {
-  @apply mb-3 h-11 w-full rounded-lg border border-slate-300 bg-transparent px-3 outline-none focus:border-ongc-blue focus:ring-1 focus:ring-ongc-blue dark:border-slate-700 dark:focus:border-blue-500;
+  @apply mb-3.5 h-12 w-full rounded-xl border border-slate-200 bg-white/80 pl-11 pr-11 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-ongc-blue focus:ring-2 focus:ring-ongc-blue/15 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-100 dark:focus:border-blue-500 dark:focus:ring-blue-500/15 transition-all duration-300;
 }
 
+/* Chat Bubbles with Premium Style */
 .bubble {
-  @apply mb-5 max-w-[85%] md:max-w-[75%] rounded-2xl p-4 leading-relaxed shadow-sm transition-all duration-300;
+  @apply mb-4 max-w-[85%] md:max-w-[72%] rounded-2xl p-4 leading-relaxed shadow-sm transition-all duration-300 relative border border-transparent text-[16px]; /* Chat font: 16px */
 }
 
 .bubble.user {
-  @apply ml-auto bg-ongc-blue text-white rounded-br-none;
+  @apply ml-auto bg-gradient-to-br from-ongc-blue via-ongc-blue to-ongc-deep text-white rounded-br-none shadow-md shadow-ongc-blue/10 min-w-fit;
 }
 
 .bubble.user,
@@ -45,83 +82,109 @@ body {
 }
 
 .bubble.user code {
-  @apply bg-blue-900/40 text-white;
+  @apply bg-blue-950/40 text-white border-none;
 }
 
 .bubble.assistant {
-  @apply mr-auto border border-slate-200 bg-white rounded-bl-none text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100;
+  @apply mr-auto border border-slate-200/70 bg-white rounded-bl-none text-slate-800 dark:border-slate-800/80 dark:bg-slate-900 dark:text-slate-100 shadow-sm shadow-slate-100/10 dark:shadow-none;
+}
+
+.bubble.error {
+  @apply mr-auto rounded-2xl rounded-bl-none border border-red-200 bg-red-50/50 text-red-800 shadow-sm dark:border-red-950/50 dark:bg-red-950/20 dark:text-red-200;
 }
 
 .bubble.assistant h1,
 .bubble.assistant h2,
 .bubble.assistant h3,
 .bubble.assistant h4 {
-  @apply mb-2 mt-4 font-bold text-slate-900 dark:text-white;
+  @apply mb-2 mt-4 font-bold text-slate-900 dark:text-white first:mt-0;
 }
 
-.bubble.assistant h1 { @apply text-xl; }
-.bubble.assistant h2 { @apply text-lg; }
-.bubble.assistant h3 { @apply text-base; }
+/* Title Font Sizes */
+.bubble.assistant h1 { @apply text-2xl; } /* Titles: 18-28px */
+.bubble.assistant h2 { @apply text-xl; }
+.bubble.assistant h3 { @apply text-lg; }
 
 .bubble.assistant p {
-  @apply mb-2.5 last:mb-0;
+  @apply mb-3 leading-7 last:mb-0;
 }
 
 .bubble.assistant ul {
-  @apply mb-3 list-disc space-y-1 pl-5 text-slate-800 dark:text-slate-200;
+  @apply mb-3 list-disc space-y-1.5 pl-5 text-slate-800 dark:text-slate-200;
 }
 
 .bubble.assistant ol {
-  @apply mb-3 list-decimal space-y-1 pl-5 text-slate-800 dark:text-slate-200;
+  @apply mb-3 list-decimal space-y-1.5 pl-5 text-slate-800 dark:text-slate-200;
 }
 
 .bubble.assistant li {
-  @apply pl-1;
+  @apply pl-1 leading-7;
 }
 
 .bubble.assistant strong {
-  @apply font-semibold text-slate-950 dark:text-white;
+  @apply font-bold text-slate-950 dark:text-white;
 }
 
 .panel {
-  @apply min-h-24 rounded-xl border border-slate-200 bg-white p-5 text-sm shadow-sm dark:border-slate-800 dark:bg-slate-900;
+  @apply min-h-24 rounded-2xl border border-slate-200/70 bg-white/80 p-5 text-[15px] shadow-sm dark:border-slate-800 dark:bg-slate-900/80;
 }
 
 .prose code,
 .bubble code {
-  @apply rounded bg-slate-100 px-1 py-0.5 text-sm font-mono dark:bg-slate-800;
+  @apply rounded-md bg-slate-100/80 px-1.5 py-0.5 text-xs font-mono border border-slate-200/30 text-slate-800 dark:bg-slate-800/80 dark:border-slate-800/30 dark:text-slate-200;
 }
 
-/* Custom premium transitions & animations */
-.transition-all-200 {
-  transition: all 0.2s ease-in-out;
+/* Glassmorphism Styles */
+.glass-card {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
-@keyframes progress-run {
-  0% { width: 0%; }
-  25% { width: 30%; }
-  50% { width: 60%; }
-  75% { width: 85%; }
-  100% { width: 95%; }
+.dark .glass-card {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.animate-progress {
-  animation: progress-run 6s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+.glass-input {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-@keyframes toast-in {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+.dark .glass-input {
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.toast-animate {
-  animation: toast-in 0.2s ease-out forwards;
+/* Skeleton Shimmer */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-/* Custom scrollbars */
+.skeleton-loader {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s infinite linear;
+}
+
+.dark .skeleton-loader {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s infinite linear;
+}
+
+/* Premium scrollbars */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -139,29 +202,64 @@ body {
 
 /* Assistant Markdown Formatting */
 .bubble.assistant table {
-  @apply w-full my-4 border-collapse border border-slate-200 dark:border-slate-800 text-sm rounded-lg overflow-hidden;
+  @apply w-full my-4 border-collapse border border-slate-200 dark:border-slate-800 text-[15px] rounded-xl overflow-hidden shadow-sm;
 }
 
 .bubble.assistant th {
-  @apply border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 font-bold text-left text-slate-900 dark:text-white;
+  @apply border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 px-3.5 py-2.5 font-bold text-left text-slate-900 dark:text-white;
 }
 
 .bubble.assistant td {
-  @apply border border-slate-200 dark:border-slate-800 px-3 py-2 text-slate-800 dark:text-slate-200;
+  @apply border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-slate-800 dark:text-slate-200;
 }
 
 .bubble.assistant a {
-  @apply text-ongc-blue hover:text-ongc-deep underline dark:text-blue-400 dark:hover:text-blue-300;
+  @apply text-ongc-blue hover:text-ongc-deep hover:underline font-medium dark:text-blue-400 dark:hover:text-blue-300;
 }
 
 .bubble.assistant pre {
-  @apply my-3 p-3.5 overflow-x-auto bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-800 dark:text-slate-200 shadow-inner;
+  @apply my-4 p-4 overflow-x-auto bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200/80 dark:border-slate-800/80 text-[13px] font-mono text-slate-800 dark:text-slate-300 shadow-inner relative;
 }
 
 .bubble.assistant pre code {
-  @apply p-0 bg-transparent text-slate-800 dark:text-slate-200;
+  @apply p-0 bg-transparent text-slate-800 dark:text-slate-300 border-none;
 }
 
 .bubble.assistant blockquote {
-  @apply pl-4 border-l-4 border-slate-300 dark:border-slate-700 italic my-3 text-slate-600 dark:text-slate-400;
+  @apply pl-4 border-l-4 border-slate-300 dark:border-slate-700 italic my-3.5 text-slate-600 dark:text-slate-400;
+}
+
+.login-bg-glow {
+  background: radial-gradient(circle at 10% 20%, rgba(0, 87, 168, 0.08) 0%, transparent 40%),
+              radial-gradient(circle at 90% 80%, rgba(212, 32, 39, 0.05) 0%, transparent 40%);
+}
+
+.dark .login-bg-glow {
+  background: radial-gradient(circle at 10% 20%, rgba(0, 87, 168, 0.15) 0%, transparent 50%),
+              radial-gradient(circle at 90% 80%, rgba(212, 32, 39, 0.08) 0%, transparent 50%);
+}
+
+@keyframes cursor-blink {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
+.stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 2px;
+  background: currentColor;
+  animation: cursor-blink 900ms infinite;
+}
+
+.toast-animate {
+  animation: toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toast-in {
+  from { transform: translateY(20px) scale(0.95); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
 }

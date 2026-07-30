@@ -8,9 +8,13 @@ services:
     volumes:
       - ./backend/storage:/app/storage
       - ./backend/ongc_intelliassist.db:/app/ongc_intelliassist.db
+    env_file:
+      - ./backend/.env
     environment:
-      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in your local environment or .env file}
       - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
   frontend:
     build:
@@ -20,3 +24,4 @@ services:
       - "5173:80"
     depends_on:
       - backend
+    restart: unless-stopped

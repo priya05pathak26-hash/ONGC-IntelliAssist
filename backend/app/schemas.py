@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_serializer
 
 
 class UserCreate(BaseModel):
@@ -58,14 +58,36 @@ class ChatResponse(BaseModel):
     citations: list[SourceCitation]
 
 
+def _naive_utc_to_iso_z(value: datetime | None) -> str | None:
+    """Issue 10 Fix: render stored naive-UTC timestamps with a trailing 'Z'.
+
+    Server writes every timestamp with datetime.utcnow() (naive). Without 'Z',
+    JavaScript's `new Date("YYYY-MM-DDTHH:MM:SS")` parses it as LOCAL time,
+    which made sidebar session times differ from chat-message times by the
+    browser's UTC offset (e.g. 5:30 h in India).  Chat message timestamps
+    were being created on the client as .toISOString() (always Z-suffixed),
+    so the user perceived a clear mismatch.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
+
+
 class SessionOut(BaseModel):
     id: int
     title: str
     pinned: bool
+    created_at: datetime | None = None
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+    @field_serializer("updated_at", "created_at")
+    def serialize_dt(self, value: datetime | None, _info) -> str | None:
+        return _naive_utc_to_iso_z(value)
 
 
 class MessageOut(BaseModel):
@@ -82,9 +104,14 @@ class MessageOut(BaseModel):
     class Config:
         from_attributes = True
 
+    @field_serializer("created_at")
+    def serialize_dt(self, value: datetime | None, _info) -> str | None:
+        return _naive_utc_to_iso_z(value)
+
 
 class FeedbackIn(BaseModel):
     message_id: int
     helpful: bool
     comment: str | None = None
+
 
