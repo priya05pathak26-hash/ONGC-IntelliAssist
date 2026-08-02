@@ -12,12 +12,14 @@ from app.config import get_settings
 _VECTORSTORE_CACHE: dict[str, FAISS] = {}
 
 class LocalHashingEmbeddings(Embeddings):
-    def __init__(self, dimension: int = 512):
+    def __init__(self, dimension: int = 16384):
         self.dimension = dimension
 
     def _embed(self, text: str) -> list[float]:
-        # Split text into tokens, lowercased
+        from app.services.text_tools import STOPWORDS
+        # Split text into tokens, lowercased, and filter out common stopwords
         tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9_+-]+", text) if len(t) > 1]
+        tokens = [t for t in tokens if t not in STOPWORDS]
         vec = np.zeros(self.dimension, dtype=np.float32)
         if not tokens:
             return vec.tolist()

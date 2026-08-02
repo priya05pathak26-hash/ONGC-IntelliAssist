@@ -34,10 +34,10 @@ def stable_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def chunk_text(text: str, size: int = 1000, overlap: int = 200) -> list[str]:
+def chunk_text(text: str, size: int = 1500, overlap: int = 350) -> list[str]:
     """
     Split text into overlapping chunks.
-    Uses RecursiveCharacterTextSplitter-style sizing: chunk_size=1000, chunk_overlap=200.
+    Uses RecursiveCharacterTextSplitter-style sizing: chunk_size=1500, chunk_overlap=350.
     Tries to split at sentence boundaries where possible to preserve semantic context.
     Never creates meaningless tiny chunks.
     """

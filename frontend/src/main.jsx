@@ -77,6 +77,17 @@ function formatTime(isoString) {
   }
 }
 
+function normalizeMarkdownBullets(text = "") {
+  return String(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/^\s*•\s+/gm, "- ")
+    .replace(/(?!^)([^\n])\s+•\s+/g, "$1\n\n- ")
+    .replace(/(?!^)([^\n])\s+-\s+(?=[A-Z0-9])/g, "$1\n\n- ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function ProtectedRoute({ children, tokens, authChecked }) {
   const location = useLocation();
 
@@ -2201,7 +2212,7 @@ function Message({ message, callApi, onRegenerate, isLast, showToast, showTechni
       <div className="flex-1 min-w-0">
         <div className="bubble assistant mb-1 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 shadow-sm w-full">
           <div className="prose dark:prose-invert max-w-none leading-relaxed text-[15px] font-medium text-slate-800 dark:text-slate-100">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdownBullets(message.content)}</ReactMarkdown>
             {message.streaming && <span className="stream-cursor" />}
           </div>
 

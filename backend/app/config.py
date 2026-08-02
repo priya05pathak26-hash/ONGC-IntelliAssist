@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     max_upload_mb: int = 100
     ollama_url: str = "http://localhost:11434/api/generate"
     ollama_model: str = "llama3.2"
+    ollama_timeout_seconds: float = 75.0
+    ollama_num_predict: int = 650
+    ollama_context_chars: int = 2800
     cors_origins: str = "*"
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
@@ -37,4 +40,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

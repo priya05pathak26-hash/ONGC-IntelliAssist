@@ -135,6 +135,56 @@ def _asks_for_subsidiary_data(question: str) -> bool:
     return any(marker in q for marker in _SUBSIDIARY_QUERY_MARKERS)
 
 
+def _expand_query(question: str) -> str:
+    q = (question or "").lower()
+    expansions = []
+    
+    # 1. Carbon / Net-Zero / Emissions / Sustainability
+    carbon_keywords = ["carbon", "emission", "net-zero", "net zero", "greenhouse", "co2", "climate", "sustainability"]
+    if any(kw in q for kw in carbon_keywords):
+        expansions.append("carbon neutrality net-zero scope-1 scope-2 emissions greenhouse gas co2 sustainability climate transition")
+        
+    # 2. HR / Leave / Employee
+    hr_keywords = ["leave", "holiday", "gratuity", "provident", "hr ", "human resource", "recruitment", "pension", "medical scheme", "prbs", "employee"]
+    if any(kw in q for kw in hr_keywords):
+        expansions.append("leave policy holiday benefit human resources gratuity pension prbs medical trust employee rules")
+        
+    # 3. HSE / Safety
+    safety_keywords = ["hse", "safety", "fire", "incident", "accident", "hazard", "sop", "ptw", "permit"]
+    if any(kw in q for kw in safety_keywords):
+        expansions.append("hse manual safety guidelines permit to work ptw incident fire hazard emergency procedure sop")
+        
+    # 4. Drilling / Reservoir / Exploration
+    drilling_keywords = ["drilling", "reservoir", "seismic", "exploration", "well", "unconventional"]
+    if any(kw in q for kw in drilling_keywords):
+        expansions.append("drilling technique reservoir engineering seismic data exploration well OALP unconventional block")
+
+    # 5. Abbreviations mapping
+    abbr_map = {
+        "idas": "integrated digital analytics system",
+        "sanjai": "systematic analytics network of jointly managed asset information dashboard",
+        "mrpl": "mangalore refinery and petrochemicals limited",
+        "hpcl": "hindustan petroleum corporation limited",
+        "ongc videsh": "ovl offshore foreign joint venture",
+        "csr": "corporate social responsibility spend community social development",
+        "pbt": "profit before tax",
+        "pat": "profit after tax standalone net profit",
+        "ebitda": "earnings before interest tax depreciation amortization",
+        "cmd": "chairman managing director",
+        "mou": "memorandum of understanding",
+        "oalp": "open acreage licensing policy bid round block",
+        "cbm": "coal bed methane",
+        "mstc": "metal scrap trade corporation",
+    }
+    for abbr, full in abbr_map.items():
+        if abbr in q:
+            expansions.append(full)
+
+    if expansions:
+        return question + " " + " ".join(expansions)
+    return question
+
+
 def _is_annual_report_filename(filename: str) -> bool:
     lower = (filename or "").lower()
     return "annualreport" in lower or re.search(r"\bar\s*20\d{2}\s*[-_]\s*\d{2}", lower) is not None
@@ -710,8 +760,24 @@ def _build_scored_chunks(results, question, document_id, threshold, expected_doc
                 break
         top_chunks = diverse_chunks
     else:
-        doc_scored_chunks = [x for x in scored_chunks if x[1]["document_id"] == best_doc_id]
-        top_chunks = doc_scored_chunks[:8]
+        # Allow multi-document retrieval for general queries too if no specific focus document is set,
+        # so broad questions receive complete, multi-year information.
+        if document_id is not None:
+            doc_scored_chunks = [x for x in scored_chunks if x[1]["document_id"] == best_doc_id]
+            top_chunks = doc_scored_chunks[:8]
+        else:
+            per_doc_cap = 5
+            doc_counts: dict = {}
+            diverse_chunks = []
+            for score, chunk in scored_chunks:
+                did = chunk["document_id"]
+                cnt = doc_counts.get(did, 0)
+                if cnt < per_doc_cap:
+                    diverse_chunks.append((score, chunk))
+                    doc_counts[did] = cnt + 1
+                if len(diverse_chunks) >= 12:
+                    break
+            top_chunks = diverse_chunks
 
     raw_texts = [item[1]["text"].strip() for item in top_chunks if item[1]["text"].strip()]
     unique_texts = deduplicate_chunks(raw_texts)
@@ -768,8 +834,9 @@ def search_uploaded_documents(
                     "Query will return NO CONTEXT.", user.id)
         return None
 
+    search_question = _expand_query(question)
     try:
-        results = vectorstore.similarity_search_with_score(question, k=15)
+        results = vectorstore.similarity_search_with_score(search_question, k=15)
     except Exception:
         log.exception("FAISS user-upload similarity_search CRASHED for user_id=%s q=%r — returning None (diagnose above)",
                       user.id, question[:80])
@@ -852,6 +919,8 @@ def search_kb_documents(
                 )
         return filtered
 
+    search_question = _expand_query(question)
+
     # ── ISSUE 4: For financial/comparison questions WITHOUT a specific focus doc,
     #             search EACH KB document separately then merge top chunks.  This ensures
     #             "profit in last 3 years" gets data from each annual report individually,
@@ -893,7 +962,7 @@ def search_kb_documents(
             try:
                 # Try FAISS filter first for precise per-document retrieval
                 doc_results = vectorstore.similarity_search_with_score(
-                    question, k=per_doc_k,
+                    search_question, k=per_doc_k,
                     filter=lambda m: m.get("document_id") == doc.id
                 )
                 if doc_results:
@@ -902,7 +971,7 @@ def search_kb_documents(
                     merged_results.extend(doc_results)
             except TypeError:
                 # FAISS filter kwarg not supported; manual fallback
-                doc_results = vectorstore.similarity_search_with_score(question, k=per_doc_k * 4)
+                doc_results = vectorstore.similarity_search_with_score(search_question, k=per_doc_k * 4)
                 filtered = [(d, s) for (d, s) in doc_results if d.metadata.get("document_id") == doc.id]
                 log.info("  ├── doc_id=%s file=%s fy=%s → filter fallback %s results",
                          doc.id, doc.filename, doc_fy, len(filtered))
@@ -921,7 +990,7 @@ def search_kb_documents(
 
     # ── DEFAULT: single global search (non-financial / specific-document queries)
     try:
-        results = vectorstore.similarity_search_with_score(question, k=15)
+        results = vectorstore.similarity_search_with_score(search_question, k=15)
     except Exception:
         log.exception("FAISS KB similarity_search CRASHED q=%r — returning None (diagnose above)",
                       question[:80])
@@ -990,7 +1059,7 @@ def get_kb_stats(db: Session) -> dict:
     kb_path = settings.vector_db_dir / "knowledge_vectors"
     vector_db_status = "Healthy" if kb_path.exists() and (kb_path / "index.faiss").exists() else "Not Built"
 
-    dimension = 512
+    dimension = 16384
     total_embeddings = total_chunks
 
     storage_dir2 = settings.vector_db_dir / "knowledge_vectors"

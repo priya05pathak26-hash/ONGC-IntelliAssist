@@ -48,18 +48,29 @@ def get_ollama_client() -> httpx.AsyncClient:
     """Get HTTP client for Ollama with generous timeout for large prompts."""
     global _ollama_client
     if _ollama_client is None or _ollama_client.is_closed:
-        _ollama_client = httpx.AsyncClient(timeout=120.0)
+        _ollama_client = httpx.AsyncClient(timeout=settings.ollama_timeout_seconds)
     return _ollama_client
 
+_internet_status_cache = {"is_online": None, "last_check": 0.0}
+
 async def check_internet_availability() -> bool:
+    import time
+    now = time.time()
+    if _internet_status_cache["is_online"] is not None and (now - _internet_status_cache["last_check"] < 30.0):
+        return _internet_status_cache["is_online"]
+        
     try:
         import socket
-        # A short TCP connection avoids changing process-wide socket defaults.
-        with socket.create_connection(("8.8.8.8", 53), timeout=1.5):
+        # Use short 0.5s timeout on raw IP to avoid DNS blocking delays
+        with socket.create_connection(("8.8.8.8", 53), timeout=0.5):
             pass
-        return True
+        is_online = True
     except Exception:
-        return False
+        is_online = False
+        
+    _internet_status_cache["is_online"] = is_online
+    _internet_status_cache["last_check"] = now
+    return is_online
 
 # ── Source labels ─────────────────────────────────────────────────────────────
 
@@ -100,19 +111,42 @@ def _clean_question(question: str) -> str:
     return " ".join(question.split()).strip()
 
 
-def _trim_context(context: str, max_chars: int = 4000, is_financial: bool = False) -> str:
+def _trim_context(context: str, max_chars: int | None = None, is_financial: bool = False) -> str:
     """Trim context to fit LLM window.
-
-    OPTIMIZATION: Reduced context sizes for faster LLM processing.
-    - Financial queries: 8000 chars (down from 12000)
-    - Regular queries: 3000 chars (down from 4000)
-    This reduces LLM processing time significantly.
+    Supports scaling limits dynamically based on online/offline parameters.
     """
     text = re.sub(r"\s+", " ", context or "").strip()
-    limit = 8000 if is_financial else max_chars
+    if max_chars is None:
+        max_chars = settings.ollama_context_chars
+    limit = max_chars * 2 if is_financial else max_chars
     if len(text) <= limit:
         return text
     return text[:limit].rsplit(" ", 1)[0] + "..."
+
+
+def _normalize_markdown_bullets(text: str) -> str:
+    """Force inline bullet runs into real Markdown list lines."""
+    if not text:
+        return text
+    out = text.replace("\r\n", "\n").replace("\r", "\n")
+    out = re.sub(r"(?m)^\s*[•]\s+", "- ", out)
+    out = re.sub(r"(?<!^)(?<!\n)\s+[•]\s+", "\n\n- ", out)
+    out = re.sub(r"(?<!^)(?<!\n)\s+\-\s+(?=[A-Z0-9])", "\n\n- ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+def _ollama_payload(prompt: str, stream: bool) -> dict:
+    return {
+        "model": settings.ollama_model,
+        "prompt": prompt,
+        "stream": stream,
+        "keep_alive": "30m",
+        "options": {
+            "temperature": 0.2,
+            "num_predict": settings.ollama_num_predict,
+        },
+    }
 
 
 def _history_text(history: list[ChatMessage]) -> str:
@@ -191,6 +225,7 @@ def _build_synthesis_prompt(
     source_label: str,
     history: list[ChatMessage],
     doc_name: str | None = None,
+    max_chars: int | None = None,
 ) -> str:
     is_fin, is_cmp = _is_financial_or_comparison(question)
     doc_hint = f" The document being discussed is: '{doc_name}'." if doc_name else ""
@@ -226,12 +261,13 @@ def _build_synthesis_prompt(
             "- NEVER generate malformed or incomplete markdown tables.\n"
         )
     extra_section = ("\n" + "\n".join(extra_rules)) if extra_rules else ""
+    fin_comp_rule = "- For financial comparisons, start with Financial Performance Comparison, then a table, then Key Observations, then Source Documents.\n" if (is_fin and is_cmp) else ""
     return (
         "You are an ONGC document and knowledge-base assistant.\n"
         "Answer the user's question using ONLY the provided retrieved context below.\n"
         "Do NOT use external knowledge or your training data.\n"
         "Do NOT invent ONGC facts, policies, financial information, HSE procedures, technical data, or organizational information.\n"
-        "If the retrieved context does not fully answer the question, say what IS found and note what is missing.\n\n"
+        "If the retrieved context does not contain the answer or if the requested data/information is not present in the context, you MUST state clearly that the information is not present in the reports/context. Do NOT list or discuss unrelated topics, and do NOT show profits, metrics, or financial details of other years if they were not requested in the question. If the requested data is not present, output only a short statement that the information is not available in the reports/context, and bypass all other formatting and length rules (do not generate a summary, headings, tables, or key takeaways in this case).\n\n"
         "CRITICAL INSTRUCTIONS FOR NUMBERS, METRICS, AND ANALYTICAL VALUES:\n"
         "- Whenever presenting, comparing, or listing statistics, figures, financial values, or analytical numbers from the knowledge base, you MUST present them in a clean Markdown tabular format (tables).\n"
         "- For each metric or numeric value reported in the table, provide a clear description of its behavior, meaning, or trend immediately below it.\n"
@@ -242,7 +278,7 @@ def _build_synthesis_prompt(
         "  You MUST use these exact figures for any standalone Revenue from Operations comparison. Do NOT use segment/subsidiary values (such as 13,517 Million or 86.91 Crore). Re-verify that the values in your table match these exact figures.\n"
         "- STRICTLY ZERO HALLUCINATION OF NUMERIC VALUES: You must extract and output the EXACT numeric values (including units: e.g., Crore, Lakh, %, etc.) from the retrieved context chunks. Never round, approximate, estimate, or modify any numbers. If a value is missing or not present in the context, state 'Not available' or 'Not disclosed'—do not guess or fill it in.\n\n"
         "FORMAT YOUR ANSWER AS FOLLOWS:\n"
-        "1. Start with a ## Summary section giving a direct, complete answer (2-5 sentences).\n"
+        "1. Start with a direct, complete answer (2-5 sentences) under no heading.\n"
         "2. Use ## headings for major explanation sections.\n"
         "3. Use bullet points (- ) for lists of items, steps, or key points.\n"
         "4. Use **bold** for important terms, values, FY labels, policy names, and all financial figures.\n"
@@ -262,9 +298,11 @@ def _build_synthesis_prompt(
         "FINAL FORMAT OVERRIDE:\n"
         "- Do not start with Summary, Executive Summary, or Overview.\n"
         "- Do not use markdown bold markers around table headers, FY labels, values, or headings.\n"
-        "- For financial comparisons, start with Financial Performance Comparison, then a table, then Key Observations, then Source Documents.\n"
-        "- Source Documents must list only the report files actually used.\n\n"
-        f"Source material ({source_label}){doc_hint}:\n{_trim_context(context, is_financial=(is_fin or is_cmp))}\n\n"
+        "- Format every bullet as its own Markdown list item on a separate line: '- point'. Never place multiple bullet points in one paragraph.\n"
+        f"{fin_comp_rule}"
+        "- Source Documents must list only the report files actually used.\n"
+        "- REFUSAL RULE (CRITICAL): If the user's question cannot be answered using the provided context (e.g. the term, policy, metric, or year requested is not present in the text), you MUST output exactly: 'The requested information is not present in the provided reports.' and absolutely nothing else. Do not generate any tables, observations, key takeaways, headings, or summaries. Do not explain what is missing or list other topics available in the context.\n\n"
+        f"Source material ({source_label}){doc_hint}:\n{_trim_context(context, max_chars=max_chars, is_financial=(is_fin or is_cmp))}\n\n"
         f"Conversation history:\n{_history_text(history)}\n\n"
         f"User question: {question}\n"
         "Assistant:"
@@ -279,10 +317,10 @@ async def _call_ollama_synthesis(prompt: str) -> str:
     try:
         response = await get_ollama_client().post(
             settings.ollama_url,
-            json={"model": settings.ollama_model, "prompt": prompt, "stream": False},
+            json=_ollama_payload(prompt, stream=False),
         )
         response.raise_for_status()
-        text = response.json().get("response", "").strip()
+        text = _normalize_markdown_bullets(response.json().get("response", "").strip())
         log.info("[STAGE 11 LLM Response] model=%s response_chars=%s via=Ollama", settings.ollama_model, len(text))
         return text
     except httpx.TimeoutException:
@@ -317,10 +355,13 @@ async def _call_general_llm(question: str, history: list[ChatMessage]) -> str:
         f"User question: {question}\n"
         "Assistant:"
     )
-    ans = await _call_ollama_synthesis(prompt)
-    if not ans and settings.groq_api_key:
-        log.info("Ollama failed or unavailable for general query. Trying Groq fallback.")
+    is_online = await check_internet_availability()
+    if is_online and settings.groq_api_key:
         ans = await _call_groq_synthesis(prompt)
+        if ans:
+            return ans
+    log.info("Groq unavailable or failed for general query. Trying Ollama fallback.")
+    ans = await _call_ollama_synthesis(prompt)
     return ans or "I'm sorry, I could not generate an answer using the general assistant at this time."
 
 
@@ -332,8 +373,9 @@ async def _stream_general_llm(question: str, history: list[ChatMessage]) -> Asyn
         f"User question: {question}\n"
         "Assistant:"
     )
-    # Prefer Groq (fast cloud GPU) over local Ollama to avoid timeouts
-    if settings.groq_api_key:
+    # Use Groq only when internet is actually available; otherwise stay local.
+    is_online = await check_internet_availability()
+    if is_online and settings.groq_api_key:
         try:
             async for token in _stream_groq_synthesis(prompt):
                 yield token
@@ -355,14 +397,18 @@ async def _synthesize_answer(
     history: list[ChatMessage],
     doc_name: str | None = None,
 ) -> str:
-    prompt = _build_synthesis_prompt(question, context, source_label, history, doc_name)
+    prompt = _build_synthesis_prompt(
+        question,
+        context,
+        source_label,
+        history,
+        doc_name,
+        max_chars=settings.ollama_context_chars,
+    )
     log.info("[STAGE 11 Final Prompt] built prompt length=%s chars. source_label=%r doc_hint=%s",
              len(prompt), source_label, doc_name)
-    
+
     answer = await _call_ollama_synthesis(prompt)
-    if not answer and settings.groq_api_key:
-        log.info("Ollama synthesis failed or timed out. Falling back to Groq synthesis.")
-        answer = await _call_groq_synthesis(prompt)
     return answer or "I found relevant material, but the synthesis service could not generate a response right now."
 
 
@@ -375,7 +421,7 @@ async def _stream_ollama_synthesis(prompt: str) -> AsyncIterator[str]:
     try:
         async with get_ollama_client().stream(
             "POST", settings.ollama_url,
-            json={"model": settings.ollama_model, "prompt": prompt, "stream": True},
+            json=_ollama_payload(prompt, stream=True),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -631,11 +677,9 @@ async def answer_question(
             )
             citations = _expand_citations_with_sources(citations, match, focus_source_label)
         else:
-            log.warning("[ROUTE 1 FOCUS NO MATCH] focus_doc_id=%s no relevant chunks → fallback to general LLM.",
-                        focus_document_id)
-            answer = await _call_general_llm(resolved_question, history)
-            source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-            domain = "General Knowledge"
+            answer = "The requested information is not present in the provided reports."
+            source = "No Relevant Context"
+            domain = "No Context"
             citations = []
 
     elif has_kb:
@@ -676,40 +720,21 @@ async def answer_question(
             )
             citations = _expand_citations_with_sources(citations, kb_match, SOURCE_KB)
         else:
-            log.warning("[ROUTE 2 DEFAULT KB NO MATCH] fallback to web search or general LLM.")
-            is_online = await check_internet_availability()
-            if is_online and settings.groq_api_key and settings.tavily_api_key:
-                tavily_results = await search_tavily(resolved_question)
-                tavily_context = format_tavily_context(tavily_results)
-                if tavily_context:
-                    answer = await query_groq_with_tavily_context(
-                        resolved_question, tavily_context,
-                        [{"role": m.role, "content": m.content} for m in history]
-                    )
-                    source = SOURCE_GROQ_TAVILY
-                    domain = "Real-time Web"
-                    sources_list = [{"title": r.get("title", ""), "url": r.get("url", "")} for r in tavily_results if r.get("url")]
-                    citations = _source_citation(source, tavily_sources=sources_list)
-                else:
-                    answer = await _call_general_llm(resolved_question, history)
-                    source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-                    domain = "General Knowledge"
-                    citations = []
-            else:
-                answer = await _call_general_llm(resolved_question, history)
-                source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-                domain = "General Knowledge"
-                citations = []
+            log.warning("[ROUTE 2 DEFAULT KB NO MATCH] no relevant reports.")
+            answer = "The requested information is not present in the provided reports."
+            source = "No Relevant Context"
+            domain = "No Context"
+            citations = []
 
     else:
         # Neither focus doc nor KB populated
         log.warning(
-            "[ROUTE 3 KB EMPTY] focus_doc_id=%s has_kb=False → fallback to general LLM.",
+            "[ROUTE 3 KB EMPTY] focus_doc_id=%s has_kb=False → no relevant reports.",
             focus_document_id,
         )
-        answer = await _call_general_llm(resolved_question, history)
-        source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-        domain = "General Knowledge"
+        answer = "The requested information is not present in the provided reports."
+        source = "No Relevant Context"
+        domain = "No Context"
         citations = []
 
     if is_new_session or session.title == "New Chat":
@@ -964,30 +989,41 @@ async def stream_answer_question(
             session.active_source = active_source_value
             prompt = _build_synthesis_prompt(
                 resolved_question, match["chunk"], source, history,
-                doc_name=match["file_name"]
+                doc_name=match["file_name"], max_chars=settings.ollama_context_chars
             )
             log.info("[STAGE 11 STREAM Final Prompt] length=%s chars source=%s focus=%s",
                      len(prompt), source, match["file_name"])
         else:
-            log.warning("[STREAM ROUTE 1 FOCUS NO MATCH] focus_doc_id=%s → fallback to general LLM.", focus_document_id)
-            source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-            domain = "General Knowledge"
+            log.warning("[STREAM ROUTE 1 FOCUS NO MATCH] focus_doc_id=%s → no relevant reports.", focus_document_id)
+            source = "No Relevant Context"
+            domain = "No Context"
             citations = []
-            yield _event("status", message="Not found in document. Answering from general knowledge...")
-            try:
-                async for token in _stream_general_llm(resolved_question, history):
-                    parts.append(token)
-                    yield _event("token", text=token)
-            except Exception as exc:
-                yield _event("error", message=str(exc), source=source)
-                return
+            answer = "The requested information is not present in the provided reports."
+            yield _event("token", text=answer)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            assistant_message.content = answer
+            assistant_message.source = source
+            assistant_message.domain = domain
+            assistant_message.response_time_ms = elapsed_ms
+            assistant_message.citations = json.dumps(citations, ensure_ascii=False)
+            session.updated_at = datetime.datetime.utcnow()
+            db.add(AuditLog(
+                user_id=user.id,
+                question=clean_question,
+                response=answer,
+                domain=domain,
+                source=source,
+                similarity_score=None,
+                response_time_ms=elapsed_ms,
+            ))
+            db.commit()
             yield _event(
                 "done",
                 session_id=session.id,
                 assistant_message_id=assistant_message.id,
                 source=source,
                 domain=domain,
-                response_time_ms=int((time.perf_counter() - started) * 1000),
+                response_time_ms=elapsed_ms,
                 citations=citations,
             )
             return
@@ -1085,88 +1121,76 @@ async def stream_answer_question(
             session.active_source = "knowledge_base"
             prompt = _build_synthesis_prompt(
                 resolved_question, kb_match["chunk"], source, history,
-                doc_name=kb_match["file_name"]
+                doc_name=kb_match["file_name"], max_chars=settings.ollama_context_chars
             )
             log.info("[STAGE 11 STREAM Final Prompt] length=%s chars source=KB file=%s",
                      len(prompt), kb_match["file_name"])
         else:
-            log.warning("[STREAM ROUTE 2 DEFAULT KB NO MATCH] → fallback to web search or general LLM.")
-            yield _event("status", message="Checking internet connectivity...")
-            is_online = await check_internet_availability()
-            if is_online and settings.groq_api_key and settings.tavily_api_key:
-                yield _event("status", message="Searching live web with Tavily...")
-                tavily_results = await search_tavily(resolved_question)
-                tavily_context_str = format_tavily_context(tavily_results)
-                if tavily_context_str:
-                    source = SOURCE_GROQ_TAVILY
-                    domain = "Real-time Web"
-                    citations = _source_citation(source)
-                    use_groq_tavily = True
-                else:
-                    source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-                    domain = "General Knowledge"
-                    citations = []
-                    yield _event("status", message="Answering from general knowledge...")
-                    try:
-                        async for token in _stream_general_llm(resolved_question, history):
-                            parts.append(token)
-                            yield _event("token", text=token)
-                    except Exception as exc:
-                        yield _event("error", message=str(exc), source=source)
-                        return
-                    yield _event(
-                        "done",
-                        session_id=session.id,
-                        assistant_message_id=assistant_message.id,
-                        source=source,
-                        domain=domain,
-                        response_time_ms=int((time.perf_counter() - started) * 1000),
-                        citations=citations,
-                    )
-                    return
-            else:
-                source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-                domain = "General Knowledge"
-                citations = []
-                yield _event("status", message="Answering from general knowledge...")
-                try:
-                    async for token in _stream_general_llm(resolved_question, history):
-                        parts.append(token)
-                        yield _event("token", text=token)
-                except Exception as exc:
-                    yield _event("error", message=str(exc), source=source)
-                    return
-                yield _event(
-                    "done",
-                    session_id=session.id,
-                    assistant_message_id=assistant_message.id,
-                    source=source,
-                    domain=domain,
-                    response_time_ms=int((time.perf_counter() - started) * 1000),
-                    citations=citations,
-                )
-                return
+            log.warning("[STREAM ROUTE 2 DEFAULT KB NO MATCH] → no relevant reports.")
+            source = "No Relevant Context"
+            domain = "No Context"
+            citations = []
+            answer = "The requested information is not present in the provided reports."
+            yield _event("token", text=answer)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            assistant_message.content = answer
+            assistant_message.source = source
+            assistant_message.domain = domain
+            assistant_message.response_time_ms = elapsed_ms
+            assistant_message.citations = json.dumps(citations, ensure_ascii=False)
+            session.updated_at = datetime.datetime.utcnow()
+            db.add(AuditLog(
+                user_id=user.id,
+                question=clean_question,
+                response=answer,
+                domain=domain,
+                source=source,
+                similarity_score=None,
+                response_time_ms=elapsed_ms,
+            ))
+            db.commit()
+            yield _event(
+                "done",
+                session_id=session.id,
+                assistant_message_id=assistant_message.id,
+                source=source,
+                domain=domain,
+                response_time_ms=elapsed_ms,
+                citations=citations,
+            )
+            return
 
     else:
-        log.warning("[STREAM ROUTE 3 KB EMPTY] focus_doc_id=%s has_kb=False → fallback to general LLM.", focus_document_id)
-        source = "Groq AI" if settings.groq_api_key else "Ollama AI"
-        domain = "General Knowledge"
+        log.warning("[STREAM ROUTE 3 KB EMPTY] focus_doc_id=%s has_kb=False → no relevant reports.", focus_document_id)
+        source = "No Relevant Context"
+        domain = "No Context"
         citations = []
-        yield _event("status", message="Answering from general knowledge...")
-        try:
-            async for token in _stream_general_llm(resolved_question, history):
-                parts.append(token)
-                yield _event("token", text=token)
-        except Exception as exc:
-            yield _event("error", message=str(exc), source=source)
-            return
+        answer = "The requested information is not present in the provided reports."
+        yield _event("token", text=answer)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        assistant_message.content = answer
+        assistant_message.source = source
+        assistant_message.domain = domain
+        assistant_message.response_time_ms = elapsed_ms
+        assistant_message.citations = json.dumps(citations, ensure_ascii=False)
+        session.updated_at = datetime.datetime.utcnow()
+        db.add(AuditLog(
+            user_id=user.id,
+            question=clean_question,
+            response=answer,
+            domain=domain,
+            source=source,
+            similarity_score=None,
+            response_time_ms=elapsed_ms,
+        ))
+        db.commit()
         yield _event(
             "done",
             session_id=session.id,
             assistant_message_id=assistant_message.id,
             source=source,
             domain=domain,
-            response_time_ms=int((time.perf_counter() - started) * 1000),
+            response_time_ms=elapsed_ms,
             citations=citations,
         )
         return
@@ -1185,22 +1209,9 @@ async def stream_answer_question(
                 parts.append(token)
                 yield _event("token", text=token)
         else:
-            # Prefer Groq (fast cloud GPU) over local Ollama to avoid timeouts on large prompts
-            if settings.groq_api_key:
-                try:
-                    async for token in _stream_groq_synthesis(prompt):
-                        parts.append(token)
-                        yield _event("token", text=token)
-                except Exception as groq_exc:
-                    log.warning("Groq stream failed (%s). Trying Ollama fallback...", groq_exc)
-                    yield _event("status", message="Cloud provider busy, switching to local model...")
-                    async for token in _stream_ollama_synthesis(prompt):
-                        parts.append(token)
-                        yield _event("token", text=token)
-            else:
-                async for token in _stream_ollama_synthesis(prompt):
-                    parts.append(token)
-                    yield _event("token", text=token)
+            async for token in _stream_ollama_synthesis(prompt):
+                parts.append(token)
+                yield _event("token", text=token)
     except Exception as exc:
         # ISSUE 9-10: Catch ALL exceptions (not just RuntimeError) to prevent
         # backend crashes. httpx.ConnectError, httpx.TimeoutException, ValueError,
@@ -1208,7 +1219,7 @@ async def stream_answer_question(
         log.exception("Synthesis stream failed for user_id=%s question=%r", user.id, clean_question[:80])
         error_msg = f"The response generation was interrupted or failed: {type(exc).__name__}"
         # Save whatever partial answer we have (if any) so the user sees something
-        partial = "".join(parts).strip()
+        partial = _normalize_markdown_bullets("".join(parts).strip())
         if partial:
             assistant_message.content = partial + f"\n\n*Note: {error_msg}*"
             assistant_message.source = source
@@ -1240,7 +1251,7 @@ async def stream_answer_question(
             yield _event("error", message=error_msg, source=source)
         return
 
-    answer = "".join(parts).strip() or "I could not generate a response right now."
+    answer = _normalize_markdown_bullets("".join(parts).strip()) or "I could not generate a response right now."
     if not answer:
         db.delete(assistant_message)
         session.updated_at = datetime.datetime.utcnow()
